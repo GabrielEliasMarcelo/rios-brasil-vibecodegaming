@@ -104,11 +104,15 @@
         <div id="ui">
             <div id="stateDisplay">🌎 Estado: Carregando...</div>
             <div id="speedDisplay">⛵ Velocidade: 0 nós</div>
+            <div id="scoreDisplay">🏆 Pontos: 0</div>
+            <div id="levelDisplay">⚡ Nível: 1</div>
         </div>
         <div id="controls">
             🎮 Use WASD para navegar<br>
             ⬆️ W/S: Acelerar/Desacelerar<br>
-            ↔️ A/D: Esquerda/Direita
+            ↔️ A/D: Esquerda/Direita<br>
+            🚧 Desvie dos obstáculos!<br>
+            🔄 ESPAÇO: Reiniciar após colisão
         </div>
     </div>
 
@@ -131,13 +135,58 @@
         // Player boat
         var boat = {
             x: 400,
-            y: 300,
+            y: 480, // Lower on screen (80% of 600px)
             width: 20,
             height: 30,
             speed: 0,
             maxSpeed: 4,
             angle: 0,
             sailAngle: 0
+        };
+
+        // Game scoring and difficulty system
+        var gameState = {
+            score: 0,
+            obstaclesAvoided: 0,
+            gameSpeed: 1,
+            difficultyLevel: 1,
+            lastObstacleTime: 0,
+            obstacleFrequency: 120, // frames between obstacles (2 seconds at 60fps)
+            gameOver: false,
+            gameOverTimer: 0,
+            finalScore: 0
+        };
+
+        // Obstacles array
+        var obstacles = [];
+
+        // Obstacle types per state
+        var obstaclesByState = {
+            "Amazonas": [
+                { type: "canoe", width: 35, height: 20, color: "#8B4513", score: 10 },
+                { type: "log", width: 45, height: 15, color: "#654321", score: 15 },
+                { type: "branch", width: 25, height: 12, color: "#228B22", score: 8 }
+            ],
+            "Para": [
+                { type: "canoe", width: 35, height: 20, color: "#8B4513", score: 10 },
+                { type: "net", width: 40, height: 25, color: "#DAA520", score: 12 },
+                { type: "fishingBoat", width: 50, height: 30, color: "#4169E1", score: 20 }
+            ],
+            "Maranhao": [
+                { type: "raft", width: 40, height: 25, color: "#CD853F", score: 12 },
+                { type: "debris", width: 30, height: 18, color: "#A0522D", score: 8 },
+                { type: "boat", width: 45, height: 28, color: "#8B0000", score: 15 }
+            ],
+            "Piaui": [
+                { type: "rock", width: 25, height: 20, color: "#696969", score: 10 },
+                { type: "sandbar", width: 60, height: 20, color: "#F4A460", score: 18 },
+                { type: "driftwood", width: 35, height: 15, color: "#D2691E", score: 12 }
+            ],
+            "Ceara": [
+                { type: "rock", width: 30, height: 25, color: "#808080", score: 12 },
+                { type: "cactusFloat", width: 20, height: 18, color: "#228B22", score: 8 },
+                { type: "barrel", width: 22, height: 22, color: "#8B4513", score: 10 }
+            ]
         };
         
         function resizeCanvas() {
@@ -151,9 +200,9 @@
             game.riverWidth = canvas.width / 3; // One third of screen width
             game.riverCenter = canvas.width / 2;
             
-            // Adjust boat position
+            // Adjust boat position - lower on screen (80% down)
             boat.x = game.riverCenter;
-            boat.y = canvas.height / 2;
+            boat.y = canvas.height * 0.8;
             boat.width = Math.max(20, canvas.width * 0.025);
             boat.height = Math.max(30, canvas.width * 0.035);
         }
@@ -169,10 +218,17 @@
         
         document.addEventListener('keydown', function(e) {
             keys[e.key.toLowerCase()] = true;
+            if (e.key === ' ') {
+                keys['space'] = true;
+                e.preventDefault(); // Prevent page scrolling
+            }
         });
         
         document.addEventListener('keyup', function(e) {
             keys[e.key.toLowerCase()] = false;
+            if (e.key === ' ') {
+                keys['space'] = false;
+            }
         });
 
         // Brazilian states
@@ -219,9 +275,270 @@
             }
         ];
 
+        function createObstacle() {
+            var currentState = getCurrentState();
+            var stateObstacles = obstaclesByState[currentState.name] || obstaclesByState["Amazonas"];
+            var obstacleType = stateObstacles[Math.floor(Math.random() * stateObstacles.length)];
+            
+            var riverLeft = game.riverCenter - game.riverWidth / 2;
+            var riverRight = game.riverCenter + game.riverWidth / 2;
+            var safeZone = 40; // Keep obstacles away from edges
+            
+            var obstacle = {
+                x: riverLeft + safeZone + Math.random() * (game.riverWidth - safeZone * 2 - obstacleType.width),
+                y: -obstacleType.height - 20, // Start above screen
+                width: obstacleType.width,
+                height: obstacleType.height,
+                type: obstacleType.type,
+                color: obstacleType.color,
+                score: obstacleType.score,
+                speed: 2 + gameState.gameSpeed
+            };
+            
+            obstacles.push(obstacle);
+        }
+
+        function updateObstacles() {
+            // Create new obstacles
+            if (game.time - gameState.lastObstacleTime > gameState.obstacleFrequency / gameState.gameSpeed) {
+                createObstacle();
+                gameState.lastObstacleTime = game.time;
+            }
+            
+            // Update existing obstacles
+            for (var i = obstacles.length - 1; i >= 0; i--) {
+                var obstacle = obstacles[i];
+                obstacle.y += obstacle.speed;
+                
+                // Remove obstacles that are off screen
+                if (obstacle.y > game.height + 50) {
+                    // Award points for avoiding obstacle
+                    gameState.score += obstacle.score;
+                    gameState.obstaclesAvoided++;
+                    
+                    // Increase difficulty every 10 obstacles
+                    if (gameState.obstaclesAvoided % 10 === 0) {
+                        gameState.difficultyLevel++;
+                        gameState.gameSpeed = Math.min(3, 1 + gameState.difficultyLevel * 0.2);
+                        gameState.obstacleFrequency = Math.max(60, 120 - gameState.difficultyLevel * 8);
+                    }
+                    
+                    obstacles.splice(i, 1);
+                }
+            }
+        }
+
+        function checkCollisions() {
+            var boatLeft = boat.x - boat.width / 2;
+            var boatRight = boat.x + boat.width / 2;
+            var boatTop = boat.y - boat.height / 2;
+            var boatBottom = boat.y + boat.height / 2;
+            
+            for (var i = 0; i < obstacles.length; i++) {
+                var obstacle = obstacles[i];
+                var obsLeft = obstacle.x;
+                var obsRight = obstacle.x + obstacle.width;
+                var obsTop = obstacle.y;
+                var obsBottom = obstacle.y + obstacle.height;
+                
+                // Simple AABB collision detection
+                if (boatLeft < obsRight && boatRight > obsLeft &&
+                    boatTop < obsBottom && boatBottom > obsTop) {
+                    // Collision detected! Trigger game over
+                    gameState.gameOver = true;
+                    gameState.gameOverTimer = 0;
+                    gameState.finalScore = gameState.score;
+                    
+                    // Visual feedback - shake boat
+                    boat.angle = Math.random() * 0.6 - 0.3;
+                    break;
+                }
+            }
+        }
+
+        // Pixel art text rendering function
+        function drawPixelText(text, x, y, scale, color) {
+            var charWidth = 6 * scale;
+            var charHeight = 8 * scale;
+            
+            // Simple pixel font mapping for essential characters
+            var pixelFont = {
+                'A': [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,1,1,1,1],[1,0,0,0,1],[1,0,0,0,1],[0,0,0,0,0]],
+                'B': [[1,1,1,1,0],[1,0,0,0,1],[1,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,1,1,1,0],[0,0,0,0,0]],
+                'C': [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+                'D': [[1,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,1,1,1,0],[0,0,0,0,0]],
+                'E': [[1,1,1,1,1],[1,0,0,0,0],[1,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,1],[0,0,0,0,0]],
+                'F': [[1,1,1,1,1],[1,0,0,0,0],[1,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[0,0,0,0,0]],
+                'G': [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,0],[1,0,1,1,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+                'H': [[1,0,0,0,1],[1,0,0,0,1],[1,1,1,1,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,0,0,0,0]],
+                'I': [[1,1,1,1,1],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[1,1,1,1,1],[0,0,0,0,0]],
+                'J': [[0,0,0,0,1],[0,0,0,0,1],[0,0,0,0,1],[0,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+                'L': [[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,1],[0,0,0,0,0]],
+                'M': [[1,0,0,0,1],[1,1,0,1,1],[1,0,1,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,0,0,0,0]],
+                'N': [[1,0,0,0,1],[1,1,0,0,1],[1,0,1,0,1],[1,0,0,1,1],[1,0,0,0,1],[1,0,0,0,1],[0,0,0,0,0]],
+                'O': [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+                'P': [[1,1,1,1,0],[1,0,0,0,1],[1,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[0,0,0,0,0]],
+                'R': [[1,1,1,1,0],[1,0,0,0,1],[1,1,1,1,0],[1,0,1,0,0],[1,0,0,1,0],[1,0,0,0,1],[0,0,0,0,0]],
+                'S': [[0,1,1,1,1],[1,0,0,0,0],[0,1,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[1,1,1,1,0],[0,0,0,0,0]],
+                'T': [[1,1,1,1,1],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,0,0,0]],
+                'U': [[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+                'V': [[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,0,1,0],[0,0,1,0,0],[0,0,0,0,0]],
+                'Y': [[1,0,0,0,1],[1,0,0,0,1],[0,1,0,1,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,0,0,0]],
+                '0': [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+                '1': [[0,0,1,0,0],[0,1,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,1,1,1,0],[0,0,0,0,0]],
+                '2': [[0,1,1,1,0],[1,0,0,0,1],[0,0,0,1,0],[0,0,1,0,0],[0,1,0,0,0],[1,1,1,1,1],[0,0,0,0,0]],
+                '3': [[1,1,1,1,0],[0,0,0,0,1],[0,1,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[1,1,1,1,0],[0,0,0,0,0]],
+                '4': [[1,0,0,0,0],[1,0,0,1,0],[1,0,0,1,0],[1,1,1,1,1],[0,0,0,1,0],[0,0,0,1,0],[0,0,0,0,0]],
+                '5': [[1,1,1,1,1],[1,0,0,0,0],[1,1,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[1,1,1,1,0],[0,0,0,0,0]],
+                '6': [[0,1,1,1,0],[1,0,0,0,0],[1,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+                '7': [[1,1,1,1,1],[0,0,0,0,1],[0,0,0,1,0],[0,0,1,0,0],[0,1,0,0,0],[1,0,0,0,0],[0,0,0,0,0]],
+                '8': [[0,1,1,1,0],[1,0,0,0,1],[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+                '9': [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,1],[0,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+                ' ': [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]]
+            };
+            
+            for (var i = 0; i < text.length; i++) {
+                var char = text[i].toUpperCase();
+                var pattern = pixelFont[char];
+                
+                if (pattern) {
+                    for (var row = 0; row < pattern.length; row++) {
+                        for (var col = 0; col < pattern[row].length; col++) {
+                            if (pattern[row][col] === 1) {
+                                drawPixelRect(
+                                    x + (i * charWidth) + (col * scale),
+                                    y + (row * scale),
+                                    scale,
+                                    scale,
+                                    color
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawGameOverScreen() {
+            // Semi-transparent overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, game.width, game.height);
+            
+            // Calculate text positioning
+            var centerX = game.width / 2;
+            var centerY = game.height / 2;
+            
+            // Draw main message
+            var mainText = "VOCE FALHOU";
+            var mainScale = Math.max(3, Math.floor(game.width / 200));
+            var mainWidth = mainText.length * 6 * mainScale;
+            drawPixelText(mainText, centerX - mainWidth/2, centerY - 80, mainScale, "#FF6B6B");
+            
+            // Draw score message
+            var scoreText = "SUA PONTUACAO FOI " + gameState.finalScore;
+            var scoreScale = Math.max(2, Math.floor(game.width / 300));
+            var scoreWidth = scoreText.length * 6 * scoreScale;
+            drawPixelText(scoreText, centerX - scoreWidth/2, centerY - 20, scoreScale, "#FFD93D");
+            
+            // Draw retry message
+            var retryText = "TENTE NOVAMENTE";
+            var retryScale = Math.max(2, Math.floor(game.width / 350));
+            var retryWidth = retryText.length * 6 * retryScale;
+            drawPixelText(retryText, centerX - retryWidth/2, centerY + 40, retryScale, "#6BCF7F");
+            
+            // Draw instructions
+            var instructText = "PRESSIONE ESPACO PARA REINICIAR";
+            var instructScale = Math.max(1, Math.floor(game.width / 500));
+            var instructWidth = instructText.length * 6 * instructScale;
+            
+            // Blinking effect
+            if (Math.floor(gameState.gameOverTimer / 30) % 2 === 0) {
+                drawPixelText(instructText, centerX - instructWidth/2, centerY + 100, instructScale, "#FFFFFF");
+            }
+        }
+
+        function resetGame() {
+            gameState.score = 0;
+            gameState.obstaclesAvoided = 0;
+            gameState.difficultyLevel = 1;
+            gameState.gameSpeed = 1;
+            gameState.obstacleFrequency = 120;
+            gameState.gameOver = false;
+            gameState.gameOverTimer = 0;
+            gameState.finalScore = 0;
+            obstacles = [];
+            boat.x = game.riverCenter;
+            boat.angle = 0;
+        }
+
+        function drawObstacle(obstacle) {
+            var x = obstacle.x;
+            var y = obstacle.y;
+            var width = obstacle.width;
+            var height = obstacle.height;
+            
+            switch(obstacle.type) {
+                case "canoe":
+                    // Indigenous canoe
+                    drawPixelRectWithShading(x, y + height - 8, width, 8, obstacle.color, "#654321");
+                    drawPixelRect(x + 2, y + height - 6, width - 4, 4, "#A0522D");
+                    drawPixelRect(x + width/2 - 2, y + 2, 4, height - 10, "#8B4513");
+                    break;
+                    
+                case "log":
+                    // Floating log
+                    drawPixelRectWithShading(x, y + height/2 - 3, width, 6, obstacle.color, "#3D2813");
+                    drawPixelRect(x + 2, y + height/2 - 1, width - 4, 2, "#8B4513");
+                    drawPixelRect(x, y + height/2 - 3, 4, 6, "#5D2F0A");
+                    drawPixelRect(x + width - 4, y + height/2 - 3, 4, 6, "#5D2F0A");
+                    break;
+                    
+                case "branch":
+                    // Tree branch
+                    drawPixelRect(x + width/2 - 2, y, 4, height, obstacle.color);
+                    drawPixelRect(x, y + height/3, width/2, 3, obstacle.color);
+                    drawPixelRect(x + width/2, y + 2*height/3, width/2, 3, obstacle.color);
+                    break;
+                    
+                case "rock":
+                    // Rock formation
+                    drawPixelRectWithShading(x + 2, y + 2, width - 4, height - 4, obstacle.color, "#2F2F2F");
+                    drawPixelRectWithShading(x + 4, y + 4, width - 8, height - 8, "#A9A9A9", obstacle.color);
+                    break;
+                    
+                case "net":
+                    // Fishing net
+                    drawPixelRect(x, y, width, height, obstacle.color);
+                    for (var i = 0; i < width; i += 6) {
+                        drawPixelRect(x + i, y, 1, height, "#8B4513");
+                    }
+                    for (var j = 0; j < height; j += 6) {
+                        drawPixelRect(x, y + j, width, 1, "#8B4513");
+                    }
+                    break;
+                    
+                case "fishingBoat":
+                    // Small fishing boat
+                    drawPixelRectWithShading(x, y + height - 10, width, 10, obstacle.color, "#191970");
+                    drawPixelRect(x + 2, y + height - 8, width - 4, 6, "#4682B4");
+                    drawPixelRect(x + width/2 - 1, y + 2, 2, height - 12, "#8B4513");
+                    break;
+                    
+                default:
+                    // Generic obstacle
+                    drawPixelRectWithShading(x, y, width, height, obstacle.color, "#2F2F2F");
+            }
+        }
+
         function getCurrentState() {
             var stateIndex = Math.floor(game.worldY / 1000) % states.length;
             return states[stateIndex];
+        }
+
+        function drawObstacles() {
+            for (var i = 0; i < obstacles.length; i++) {
+                drawObstacle(obstacles[i]);
+            }
         }
 
         function drawPixelRect(x, y, width, height, color) {
@@ -485,6 +802,16 @@
         }
 
         function update() {
+            if (gameState.gameOver) {
+                gameState.gameOverTimer++;
+                
+                // Check for restart input
+                if (keys[' '] || keys['space']) {
+                    resetGame();
+                }
+                return; // Don't update game logic when game over
+            }
+            
             if (keys['w']) {
                 boat.speed = Math.min(boat.speed + 0.15, boat.maxSpeed);
                 game.worldY += boat.speed;
@@ -510,6 +837,11 @@
             }
             
             boat.sailAngle = boat.speed * 0.3;
+            
+            // Update obstacles system
+            updateObstacles();
+            checkCollisions();
+            
             game.time++;
         }
 
@@ -522,11 +854,22 @@
             
             drawLandscape();
             drawWater();
+            
+            // Draw obstacles before boat so boat appears on top
+            drawObstacles();
+            
             drawBoat();
+            
+            // Draw game over screen if needed
+            if (gameState.gameOver) {
+                drawGameOverScreen();
+            }
             
             var currentState = getCurrentState();
             document.getElementById('stateDisplay').textContent = '🌎 Estado: ' + currentState.name;
             document.getElementById('speedDisplay').textContent = '⛵ Velocidade: ' + Math.abs(boat.speed).toFixed(1) + ' nós';
+            document.getElementById('scoreDisplay').textContent = '🏆 Pontos: ' + gameState.score;
+            document.getElementById('levelDisplay').textContent = '⚡ Nível: ' + gameState.difficultyLevel;
         }
 
         function gameLoop() {
