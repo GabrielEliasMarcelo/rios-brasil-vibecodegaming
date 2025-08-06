@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brazilian River Adventure</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #gameContainer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #87CEEB;
+        }
+        
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            object-fit: cover;
+        }
+        
+        #ui {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            text-shadow: 3px 3px 0px black, -1px -1px 0px black, 1px -1px 0px black, -1px 1px 0px black;
+            font-size: 18px;
+            font-weight: bold;
+            z-index: 100;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 10px;
+            backdrop-filter: blur(5px);
+        }
+        
+        #controls {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            color: white;
+            text-shadow: 3px 3px 0px black, -1px -1px 0px black, 1px -1px 0px black, -1px 1px 0px black;
+            font-size: 16px;
+            font-weight: bold;
+            text-align: right;
+            z-index: 100;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 10px;
+            backdrop-filter: blur(5px);
+        }
+        
+        @media (max-width: 768px) {
+            #ui {
+                font-size: 16px;
+                padding: 12px;
+                top: 15px;
+                left: 15px;
+            }
+            
+            #controls {
+                font-size: 14px;
+                padding: 12px;
+                bottom: 15px;
+                right: 15px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            #ui {
+                font-size: 14px;
+                padding: 10px;
+                top: 10px;
+                left: 10px;
+            }
+            
+            #controls {
+                font-size: 12px;
+                padding: 10px;
+                bottom: 10px;
+                right: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui">
+            <div id="stateDisplay">🌎 Estado: Carregando...</div>
+            <div id="speedDisplay">⛵ Velocidade: 0 nós</div>
+        </div>
+        <div id="controls">
+            🎮 Use WASD para navegar<br>
+            ⬆️ W/S: Acelerar/Desacelerar<br>
+            ↔️ A/D: Esquerda/Direita
+        </div>
+    </div>
+
+    <script>
+        // Get screen dimensions and setup canvas
+        var canvas = document.getElementById('gameCanvas');
+        var ctx = canvas.getContext('2d');
+        
+        // Game state - initialize with default values first
+        var game = {
+            width: 800,
+            height: 600,
+            time: 0,
+            worldY: 0,
+            riverWidth: 267, // Approximately 1/3 of default 800px width
+            riverCenter: 400,
+            scrollSpeed: 2
+        };
+
+        // Player boat
+        var boat = {
+            x: 400,
+            y: 300,
+            width: 20,
+            height: 30,
+            speed: 0,
+            maxSpeed: 4,
+            angle: 0,
+            sailAngle: 0
+        };
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            ctx.imageSmoothingEnabled = false;
+            
+            // Update game dimensions - river takes up middle third of screen
+            game.width = canvas.width;
+            game.height = canvas.height;
+            game.riverWidth = canvas.width / 3; // One third of screen width
+            game.riverCenter = canvas.width / 2;
+            
+            // Adjust boat position
+            boat.x = game.riverCenter;
+            boat.y = canvas.height / 2;
+            boat.width = Math.max(20, canvas.width * 0.025);
+            boat.height = Math.max(30, canvas.width * 0.035);
+        }
+        
+        // Initialize canvas size
+        resizeCanvas();
+        
+        // Handle window resize
+        window.addEventListener('resize', resizeCanvas);
+
+        // Input handling
+        var keys = {};
+        
+        document.addEventListener('keydown', function(e) {
+            keys[e.key.toLowerCase()] = true;
+        });
+        
+        document.addEventListener('keyup', function(e) {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        // Brazilian states
+        var states = [
+            {
+                name: "Amazonas",
+                color: "#2E8B57",
+                accentColor: "#3CB371",
+                features: ["rainforest", "hut"],
+                trees: 12,
+                buildings: 2
+            },
+            {
+                name: "Para",
+                color: "#228B22", 
+                accentColor: "#32CD32",
+                features: ["palm", "dock"],
+                trees: 10,
+                buildings: 3
+            },
+            {
+                name: "Maranhao",
+                color: "#6B8E23",
+                accentColor: "#9ACD32",
+                features: ["babacu", "house"],
+                trees: 8,
+                buildings: 4
+            },
+            {
+                name: "Piaui",
+                color: "#DAA520",
+                accentColor: "#FFD700",
+                features: ["caatinga", "farm"],
+                trees: 6,
+                buildings: 5
+            },
+            {
+                name: "Ceara",
+                color: "#CD853F",
+                accentColor: "#F4A460",
+                features: ["cactus", "windmill"],
+                trees: 4,
+                buildings: 6
+            }
+        ];
+
+        function getCurrentState() {
+            var stateIndex = Math.floor(game.worldY / 1000) % states.length;
+            return states[stateIndex];
+        }
+
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), width, height);
+        }
+
+        function drawPixelRectWithShading(x, y, width, height, baseColor, shadowColor) {
+            drawPixelRect(x, y, width, height, baseColor);
+            drawPixelRect(x + width - 2, y + 2, 2, height - 2, shadowColor);
+            drawPixelRect(x + 2, y + height - 2, width - 2, 2, shadowColor);
+        }
+
+        function drawPixelRectOutlined(x, y, width, height, fillColor, outlineColor) {
+            drawPixelRect(x, y, width, height, outlineColor);
+            drawPixelRect(x + 1, y + 1, width - 2, height - 2, fillColor);
+        }
+
+        function drawBoat() {
+            var x = boat.x - boat.width / 2;
+            var y = boat.y - boat.height / 2;
+            
+            // Boat shadow
+            drawPixelRect(x + 2, y + 27, 18, 6, "rgba(0,0,0,0.3)");
+            
+            // Boat hull
+            drawPixelRectWithShading(x + 2, y + 20, 16, 8, "#8B4513", "#5D2F0A");
+            drawPixelRectWithShading(x + 4, y + 18, 12, 4, "#CD853F", "#A0522D");
+            
+            // Hull details
+            drawPixelRect(x + 6, y + 22, 8, 2, "#A0522D");
+            drawPixelRect(x + 1, y + 21, 2, 4, "#654321");
+            drawPixelRect(x + 17, y + 21, 2, 4, "#654321");
+            
+            // Mast
+            drawPixelRectWithShading(x + 9, y + 4, 3, 18, "#654321", "#3D2813");
+            
+            // Sail with animation
+            var sailOffset = Math.sin(game.time * 0.05 + boat.sailAngle) * 1;
+            drawPixelRectOutlined(x + 12 + sailOffset, y + 4, 8, 14, "#F8F8FF", "#D3D3D3");
+            drawPixelRect(x + 13 + sailOffset, y + 6, 6, 10, "#FFFFFF");
+            
+            // Bow decoration
+            drawPixelRectWithShading(x + 6, y + 15, 8, 4, "#FF6347", "#DC143C");
+            drawPixelRect(x + 8, y + 16, 4, 2, "#FFD700");
+        }
+
+        function drawWater() {
+            var riverLeft = game.riverCenter - game.riverWidth / 2;
+            var riverRight = game.riverCenter + game.riverWidth / 2;
+            
+            // River layers
+            drawPixelRect(riverLeft, 0, game.riverWidth, game.height, "#1E90FF");
+            drawPixelRect(riverLeft + 20, 0, game.riverWidth - 40, game.height, "#4169E1");
+            drawPixelRect(riverLeft + 40, 0, game.riverWidth - 80, game.height, "#0080FF");
+            
+            // Animated water flow with multiple layers - wider coverage
+            for (var y = 0; y < game.height; y += 12) {
+                var flowOffset = (game.time * game.scrollSpeed + y) % 24;
+                var waveX = Math.sin((y + game.time * 0.1) * 0.08) * 10; // Increased wave amplitude
+                
+                // Primary water current - wider
+                drawPixelRect(riverLeft + 40 + waveX, y - flowOffset, game.riverWidth - 80, 3, "#87CEEB");
+                drawPixelRect(riverLeft + 60 + waveX * 0.7, y - flowOffset + 6, game.riverWidth - 120, 2, "#B0E0E6");
+                
+                // Additional water layers for width
+                drawPixelRect(riverLeft + 20 + waveX * 1.2, y - flowOffset + 3, game.riverWidth - 40, 1, "#ADD8E6");
+                drawPixelRect(riverLeft + 80 + waveX * 0.5, y - flowOffset + 9, game.riverWidth - 160, 1, "#E0F6FF");
+            }
+            
+            // River banks
+            var bankCurve = Math.sin(game.worldY * 0.008) * 12;
+            drawPixelRectWithShading(riverLeft - 6 + bankCurve, 0, 8, game.height, "#8B4513", "#654321");
+            drawPixelRectWithShading(riverRight - 2 - bankCurve, 0, 8, game.height, "#8B4513", "#654321");
+        }
+
+        function drawTreeTopDown(x, y, type) {
+            if (type === "palm") {
+                drawPixelRectOutlined(x - 3, y - 3, 16, 16, "#228B22", "#006400");
+                drawPixelRectOutlined(x - 1, y - 1, 12, 12, "#32CD32", "#228B22");
+                drawPixelRectOutlined(x + 1, y + 1, 8, 8, "#9ACD32", "#32CD32");
+                drawPixelRectWithShading(x + 3, y + 3, 4, 4, "#8B4513", "#654321");
+            } else {
+                drawPixelRectOutlined(x - 2, y - 2, 14, 14, "#006400", "#004000");
+                drawPixelRectOutlined(x, y, 10, 10, "#228B22", "#006400");
+                drawPixelRectOutlined(x + 2, y + 2, 6, 6, "#32CD32", "#228B22");
+                drawPixelRectWithShading(x + 4, y + 4, 2, 2, "#654321", "#3D2813");
+            }
+        }
+
+        function drawBuildingTopDown(x, y, type) {
+            switch(type) {
+                case "hut":
+                    drawPixelRectWithShading(x, y, 18, 14, "#8B4513", "#654321");
+                    drawPixelRectWithShading(x + 2, y + 2, 14, 10, "#A0522D", "#8B4513");
+                    drawPixelRect(x + 6, y + 5, 6, 4, "#654321");
+                    drawPixelRect(x + 8, y + 6, 2, 2, "#FFD700");
+                    break;
+                case "windmill":
+                    drawPixelRectWithShading(x + 3, y + 3, 10, 10, "#FFFFFF", "#E0E0E0");
+                    drawPixelRectWithShading(x - 2, y + 7, 16, 3, "#8B4513", "#654321");
+                    drawPixelRectWithShading(x + 7, y - 2, 3, 16, "#8B4513", "#654321");
+                    drawPixelRect(x + 7, y + 7, 3, 3, "#654321");
+                    break;
+                default:
+                    drawPixelRectWithShading(x, y, 18, 16, "#CD853F", "#A0522D");
+                    drawPixelRectWithShading(x + 2, y + 2, 14, 12, "#DEB887", "#CD853F");
+                    drawPixelRectWithShading(x + 1, y - 2, 16, 4, "#8B0000", "#654321");
+                    drawPixelRect(x + 6, y + 7, 6, 5, "#654321");
+                    drawPixelRect(x + 4, y + 4, 3, 3, "#87CEEB");
+                    drawPixelRect(x + 11, y + 4, 3, 3, "#87CEEB");
+            }
+        }
+
+        function drawCactusTopDown(x, y) {
+            drawPixelRectWithShading(x + 4, y + 4, 8, 8, "#228B22", "#006400");
+            drawPixelRectWithShading(x + 5, y + 5, 6, 6, "#32CD32", "#228B22");
+            drawPixelRectWithShading(x, y + 6, 6, 4, "#228B22", "#006400");
+            drawPixelRectWithShading(x + 10, y + 6, 6, 4, "#228B22", "#006400");
+            drawPixelRect(x + 6, y + 6, 1, 1, "#FFFF00");
+            drawPixelRect(x + 9, y + 7, 1, 1, "#FFFF00");
+        }
+
+        function drawSun() {
+            var sunX = game.width - 100;
+            var sunY = 80;
+            var sunRadius = 30;
+            var pulseSize = Math.sin(game.time * 0.08) * 3;
+            
+            // Sun rays
+            for (var i = 0; i < 12; i++) {
+                var angle = (i / 12) * Math.PI * 2;
+                var rayLength = 45 + Math.sin(game.time * 0.1 + i * 0.5) * 8;
+                var startX = sunX + Math.cos(angle) * (sunRadius + 5);
+                var startY = sunY + Math.sin(angle) * (sunRadius + 5);
+                var endX = sunX + Math.cos(angle) * rayLength;
+                var endY = sunY + Math.sin(angle) * rayLength;
+                
+                var rayWidth = 3;
+                drawPixelRectWithShading(
+                    Math.min(startX, endX) - rayWidth/2, 
+                    Math.min(startY, endY) - rayWidth/2,
+                    Math.abs(endX - startX) + rayWidth, 
+                    Math.abs(endY - startY) + rayWidth,
+                    "#FFD700", "#FFA500"
+                );
+            }
+            
+            // Sun body
+            drawPixelRectOutlined(
+                sunX - sunRadius, sunY - sunRadius,
+                sunRadius * 2, sunRadius * 2,
+                "#FFFF00", "#FFD700"
+            );
+            drawPixelRectOutlined(
+                sunX - sunRadius + 4, sunY - sunRadius + 4,
+                sunRadius * 2 - 8, sunRadius * 2 - 8,
+                "#FFD700", "#FFA500"
+            );
+            
+            // Sun face
+            drawPixelRect(sunX - 8, sunY - 8, 4, 4, "#FF8C00");
+            drawPixelRect(sunX + 4, sunY - 8, 4, 4, "#FF8C00");
+            drawPixelRect(sunX - 6, sunY + 4, 12, 3, "#FF8C00");
+        }
+
+        function drawClouds() {
+            for (var i = 0; i < 4; i++) {
+                var cloudX = (i * 200 + game.time * 0.3) % (game.width + 100) - 50;
+                var cloudY = 40 + Math.sin(i + game.time * 0.02) * 15;
+                
+                if (cloudX >= -80 && cloudX <= game.width + 80) {
+                    drawPixelRectOutlined(cloudX, cloudY, 60, 25, "#FFFFFF", "#E0E0E0");
+                    drawPixelRectOutlined(cloudX + 10, cloudY - 8, 40, 20, "#FFFFFF", "#E0E0E0");
+                    drawPixelRectOutlined(cloudX + 25, cloudY - 5, 35, 18, "#F8F8FF", "#D3D3D3");
+                }
+            }
+        }
+
+        function drawLandscape() {
+            var currentState = getCurrentState();
+            
+            // Base landscape
+            drawPixelRect(0, 0, game.riverCenter - game.riverWidth / 2, game.height, currentState.color);
+            drawPixelRect(game.riverCenter + game.riverWidth / 2, 0, 
+                         game.width - (game.riverCenter + game.riverWidth / 2), game.height, currentState.color);
+            
+            // Accent patches
+            for (var i = 0; i < 8; i++) {
+                var patchX1 = (i * 80) % (game.riverCenter - game.riverWidth / 2 - 60);
+                var patchY1 = ((i * 120 - game.worldY * 0.1) % (game.height + 100)) - 50;
+                var patchX2 = game.riverCenter + game.riverWidth / 2 + (i * 90) % 
+                               (game.width - game.riverCenter - game.riverWidth / 2 - 60);
+                var patchY2 = (((i + 4) * 130 - game.worldY * 0.1) % (game.height + 100)) - 50;
+                
+                if (patchY1 >= -40 && patchY1 <= game.height + 40) {
+                    drawPixelRect(patchX1, patchY1, 40, 30, currentState.accentColor);
+                }
+                if (patchY2 >= -40 && patchY2 <= game.height + 40) {
+                    drawPixelRect(patchX2, patchY2, 45, 35, currentState.accentColor);
+                }
+            }
+            
+            // Trees
+            var featureSpacing = 60;
+            var scrollOffset = game.worldY * 0.4;
+            
+            for (var i = 0; i < currentState.trees; i++) {
+                var leftX = 25 + (i * 55 + Math.sin(i) * 20) % (game.riverCenter - game.riverWidth / 2 - 50);
+                var leftY = ((i * featureSpacing - scrollOffset) % (game.height + 120)) - 60;
+                
+                var rightX = game.riverCenter + game.riverWidth / 2 + 25 + 
+                              (i * 60 + Math.cos(i) * 15) % (game.width - game.riverCenter - game.riverWidth / 2 - 50);
+                var rightY = (((i + 7) * featureSpacing - scrollOffset) % (game.height + 120)) - 60;
+                
+                if (leftY >= -50 && leftY <= game.height + 50) {
+                    if (currentState.features.indexOf("palm") !== -1) {
+                        drawTreeTopDown(leftX, leftY, "palm");
+                    } else if (currentState.features.indexOf("cactus") !== -1) {
+                        drawCactusTopDown(leftX, leftY);
+                    } else {
+                        drawTreeTopDown(leftX, leftY);
+                    }
+                }
+                
+                if (rightY >= -50 && rightY <= game.height + 50) {
+                    if (currentState.features.indexOf("palm") !== -1) {
+                        drawTreeTopDown(rightX, rightY, "palm");
+                    } else if (currentState.features.indexOf("cactus") !== -1) {
+                        drawCactusTopDown(rightX, rightY);
+                    } else {
+                        drawTreeTopDown(rightX, rightY);
+                    }
+                }
+            }
+            
+            // Buildings
+            for (var i = 0; i < currentState.buildings; i++) {
+                var leftX = 35 + (i * 90) % (game.riverCenter - game.riverWidth / 2 - 70);
+                var leftY = ((i * 140 - scrollOffset * 0.8) % (game.height + 160)) - 80;
+                
+                var rightX = game.riverCenter + game.riverWidth / 2 + 35 + 
+                              (i * 95) % (game.width - game.riverCenter - game.riverWidth / 2 - 70);
+                var rightY = (((i + 5) * 145 - scrollOffset * 0.8) % (game.height + 160)) - 80;
+                
+                var buildingType = 'house';
+                if (currentState.features.indexOf("hut") !== -1) buildingType = "hut";
+                else if (currentState.features.indexOf("windmill") !== -1) buildingType = "windmill";
+                
+                if (leftY >= -60 && leftY <= game.height + 60) {
+                    drawBuildingTopDown(leftX, leftY, buildingType);
+                }
+                
+                if (rightY >= -60 && rightY <= game.height + 60) {
+                    drawBuildingTopDown(rightX, rightY, buildingType);
+                }
+            }
+            
+            drawClouds();
+            drawSun();
+        }
+
+        function update() {
+            if (keys['w']) {
+                boat.speed = Math.min(boat.speed + 0.15, boat.maxSpeed);
+                game.worldY += boat.speed;
+            }
+            if (keys['s']) {
+                boat.speed = Math.max(boat.speed - 0.15, -boat.maxSpeed * 0.5);
+                game.worldY += boat.speed;
+            }
+            if (keys['a']) {
+                boat.x = Math.max(boat.x - 4, game.riverCenter - game.riverWidth / 2 + boat.width / 2 + 15);
+                boat.angle = -0.3;
+            } else if (keys['d']) {
+                boat.x = Math.min(boat.x + 4, game.riverCenter + game.riverWidth / 2 - boat.width / 2 - 15);
+                boat.angle = 0.3;
+            } else {
+                boat.angle *= 0.9;
+            }
+            
+            boat.speed *= 0.95;
+            
+            if (Math.abs(boat.speed) < 0.1) {
+                game.worldY += game.scrollSpeed * 0.5;
+            }
+            
+            boat.sailAngle = boat.speed * 0.3;
+            game.time++;
+        }
+
+        function render() {
+            ctx.fillStyle = '#87CEEB';
+            ctx.fillRect(0, 0, game.width, game.height);
+            
+            drawPixelRect(0, 0, game.width, game.height * 0.3, '#B0E0E6');
+            drawPixelRect(0, 0, game.width, game.height * 0.15, '#E0F6FF');
+            
+            drawLandscape();
+            drawWater();
+            drawBoat();
+            
+            var currentState = getCurrentState();
+            document.getElementById('stateDisplay').textContent = '🌎 Estado: ' + currentState.name;
+            document.getElementById('speedDisplay').textContent = '⛵ Velocidade: ' + Math.abs(boat.speed).toFixed(1) + ' nós';
+        }
+
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+
+        // Touch controls
+        var touchStartX = 0;
+        var touchStartY = 0;
+        
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            var touch = e.touches[0];
+            var rect = canvas.getBoundingClientRect();
+            touchStartX = touch.clientX - rect.left;
+            touchStartY = touch.clientY - rect.top;
+        });
+        
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            var touch = e.touches[0];
+            var rect = canvas.getBoundingClientRect();
+            var touchX = touch.clientX - rect.left;
+            var touchY = touch.clientY - rect.top;
+            
+            var deltaX = touchX - touchStartX;
+            var deltaY = touchY - touchStartY;
+            
+            if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                if (deltaX > 10) keys['d'] = true; else keys['d'] = false;
+                if (deltaX < -10) keys['a'] = true; else keys['a'] = false;
+            } else {
+                if (deltaY < -10) keys['w'] = true; else keys['w'] = false;
+                if (deltaY > 10) keys['s'] = true; else keys['s'] = false;
+            }
+        });
+        
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            keys['w'] = keys['a'] = keys['s'] = keys['d'] = false;
+        });
+    </script>
+</body>
+</html>
